@@ -21,7 +21,7 @@
       };
       ghc = "ghc924";
 
-      megaparsecSource = pkgs.lib.sourceByRegex ./. [
+      slowMegaparsecSource = pkgs.lib.sourceByRegex ./. [
         "^CHANGELOG\.md$"
         "^LICENSE\.md$"
         "^README\.md$"
@@ -30,7 +30,7 @@
         "^megaparsec\.cabal$"
       ];
 
-      megaparsecTestsSource = pkgs.lib.sourceByRegex ./megaparsec-tests [
+      slowMegaparsecTestsSource = pkgs.lib.sourceByRegex ./megaparsec-tests [
         "^LICENSE\.md$"
         "^README\.md$"
         "^megaparsec-tests\.cabal$"
@@ -71,11 +71,11 @@
       patch = p: patch:
         pkgs.haskell.lib.appendPatch p patch;
 
-      megaparsecOverlay = self: super: {
-        "megaparsec" = doBenchmark
-          (super.callCabal2nix "megaparsec" megaparsecSource { });
-        "megaparsec-tests" =
-          super.callCabal2nix "megaparsec-tests" megaparsecTestsSource { };
+      slowMegaparsecOverlay = self: super: {
+        "slow-megaparsec" = doBenchmark
+          (super.callCabal2nix "megaparsec" slowMegaparsecSource { });
+        "slow-megaparsec-tests" =
+          super.callCabal2nix "megaparsec-tests" slowMegaparsecTestsSource { };
         # The ‘parser-combinators-tests’ package is a bit special because it
         # does not contain an executable nor a library, so its install phase
         # normally fails. We want to build it and run the tests anyway, so we
@@ -94,7 +94,7 @@
         haskell = pkgs.haskell // {
           packages = pkgs.haskell.packages // {
             "${ghc}" = pkgs.haskell.packages.${ghc}.override {
-              overrides = megaparsecOverlay;
+              overrides = slowMegaparsecOverlay;
             };
           };
         };
@@ -105,32 +105,16 @@
       # Base: Megaparsec and its unit tests:
       base = {
         inherit (haskellPackages)
-          hspec-megaparsec
-          megaparsec
-          megaparsec-tests
+          # hspec-megaparsec
+          slow-megaparsec
+          slow-megaparsec-tests
           parser-combinators-tests;
-      };
-
-      # Dependent packages of interest:
-      deps = {
-        inherit (haskellPackages)
-          cachix
-          cassava-megaparsec
-          cue-sheet
-          dhall
-          hledger
-          idris
-          mmark
-          modern-uri
-          replace-megaparsec
-          stache
-          tomland;
       };
 
       # Benchmarks:
       benches = {
         inherit (haskellPackages)
-          megaparsec
+          slow-megaparsec
           mmark
           modern-uri
           parsers-bench;
@@ -138,8 +122,8 @@
 
       # Source distributions:
       dist = with pkgs.haskell.lib; {
-        megaparsec = sdistTarball haskellPackages.megaparsec;
-        megaparsec-tests = sdistTarball haskellPackages.megaparsec-tests;
+        slow-megaparsec = sdistTarball haskellPackages.slow-megaparsec;
+        slow-megaparsec-tests = sdistTarball haskellPackages.slow-megaparsec-tests;
       };
       haskellLanguageServer = pkgs.haskell.lib.overrideCabal haskellPackages.haskell-language-server
         (_: { enableSharedExecutables = true; });
@@ -149,18 +133,16 @@
         packages = flake-utils.lib.flattenTree {
           base = pkgs.recurseIntoAttrs base;
           all_base = pkgs.linkFarmFromDrvs "base" (builtins.attrValues base);
-          deps = pkgs.recurseIntoAttrs deps;
-          all_deps = pkgs.linkFarmFromDrvs "deps" (builtins.attrValues deps);
           benches = pkgs.recurseIntoAttrs benches;
           all_benches = pkgs.linkFarmFromDrvs "benches" (builtins.attrValues benches);
           dist = pkgs.recurseIntoAttrs dist;
           all_dist = pkgs.linkFarmFromDrvs "dist" (builtins.attrValues dist);
         };
-        defaultPackage = base.megaparsec;
+        defaultPackage = base.slow-megaparsec;
         devShells.default = haskellPackages.shellFor {
           packages = ps: [
-            ps.megaparsec
-            ps.megaparsec-tests
+            ps.slow-megaparsec
+            ps.slow-megaparsec-tests
           ];
           buildInputs = with haskellPackages; [
             cabal-install

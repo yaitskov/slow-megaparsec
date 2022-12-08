@@ -62,7 +62,7 @@ import Text.Megaparsec.State
 --
 -- __Note__: before the version /9.0.0/ the class included the methods from
 -- 'VisualStream' and 'TraversableStream'.
-class (Ord (Token s), Ord (Tokens s)) => Stream s where
+class (Show (Token s), Show (Tokens s), Ord (Token s), Ord (Tokens s)) => Stream s where
   -- | Type of token in the stream.
   type Token s :: Type
 
@@ -131,7 +131,7 @@ class (Ord (Token s), Ord (Tokens s)) => Stream s where
   takeWhile_ :: (Token s -> Bool) -> s -> (Tokens s, s)
 
 -- | @since 9.0.0
-instance Ord a => Stream [a] where
+instance (Show a, Ord a) => Stream [a] where
   type Token [a] = a
   type Tokens [a] = [a]
   tokenToChunk Proxy = pure
@@ -148,7 +148,7 @@ instance Ord a => Stream [a] where
   takeWhile_ = span
 
 -- | @since 9.0.0
-instance Ord a => Stream (S.Seq a) where
+instance (Show a, Ord a) => Stream (S.Seq a) where
   type Token (S.Seq a) = a
   type Tokens (S.Seq a) = S.Seq a
   tokenToChunk Proxy = pure

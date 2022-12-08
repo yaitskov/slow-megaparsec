@@ -39,7 +39,7 @@ library
         attoparsec -any,
         bytestring -any,
         deepseq -any,
-        megaparsec -any,
+        slow-megaparsec -any,
         parser-combinators -any,
         scientific -any,
         text -any,

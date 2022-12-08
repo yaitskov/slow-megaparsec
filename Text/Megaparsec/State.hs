@@ -22,6 +22,8 @@
 module Text.Megaparsec.State
   ( State (..),
     PosState (..),
+    MegaParsecTrace (..),
+    MegaParsecTracing (..)
   )
 where
 
@@ -49,7 +51,11 @@ data State s e = State
     -- that the last registered error is the first element of the list.
     --
     -- @since 8.0.0
-    stateParseErrors :: [ParseError s e]
+    stateParseErrors :: [ParseError s e],
+    -- | Tracing state
+    --
+    -- @since 9.3.0
+    stateTracing :: MegaParsecTracing s
   }
   deriving (Typeable, Generic)
 
@@ -93,3 +99,36 @@ data PosState s = PosState
   deriving (Show, Eq, Data, Typeable, Generic)
 
 instance NFData s => NFData (PosState s)
+
+type MegaParsecTraceMessage = String
+
+-- | Event changing parser state with current position and message
+data MegaParsecTrace s
+  = MegaParsecTrace {
+    megaParsecTraceOffset :: {-# UNPACK #-} !Int,
+    megaParsecTraceMessage :: MegaParsecTraceMessage
+  }
+  | MegaParsecTraceBegin {
+    megaParsecTraceOffset :: {-# UNPACK #-} !Int,
+    megaParsecTraceMessage :: MegaParsecTraceMessage
+  }
+  | MegaParsecTraceEnd {
+    megaParsecTraceOffset :: {-# UNPACK #-} !Int,
+    megaParsecTraceMessage :: MegaParsecTraceMessage,
+    megaParsecTraceBeginOffset :: {-# UNPACK #-} !Int
+  }
+  deriving (Show, Eq, Data, Typeable, Generic)
+
+instance (NFData s) => NFData (MegaParsecTrace s)
+
+-- | All event changing parser state since start.
+-- Decreasing offset means backtracking
+data MegaParsecTracing s = MegaParsecTracing
+  {
+    megaParsecTracingOriginInput :: s,
+    megaParsecTracingSteps :: [MegaParsecTrace s],
+    megaParsecTracingNumOfSteps :: {-# UNPACK #-} !Int
+  }
+  deriving (Show, Eq, Data, Typeable, Generic)
+
+instance (NFData s) => NFData (MegaParsecTracing s)

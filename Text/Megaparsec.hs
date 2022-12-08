@@ -114,6 +114,7 @@ where
 
 import Control.Monad.Combinators
 import Control.Monad.Identity
+import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromJust)
@@ -306,7 +307,8 @@ initialState name s =
             pstateTabWidth = defaultTabWidth,
             pstateLinePrefix = ""
           },
-      stateParseErrors = []
+      stateParseErrors = [],
+      stateTracing = appendTrace 0 ("init [" ++ name ++ "]") $ MegaParsecTracing s [] 0
     }
 
 ----------------------------------------------------------------------------
@@ -353,7 +355,7 @@ fancyFailure xs = do
 --
 -- > unexpected item = failure (Just item) Set.empty
 unexpected :: MonadParsec e s m => ErrorItem (Token s) -> m a
-unexpected item = failure (Just item) E.empty
+unexpected item = failure (Just item) E.empty <?> "unexpected [" ++ show item ++ "]"
 {-# INLINE unexpected #-}
 
 -- | Report a custom parse error. For a more general version, see
@@ -450,7 +452,7 @@ single ::
   -- | Token to match
   Token s ->
   m (Token s)
-single t = token testToken expected
+single t = token testToken expected <?> "single " ++ show t
   where
     testToken x = if x == t then Just x else Nothing
     expected = E.singleton (Tokens (t :| []))
@@ -474,7 +476,7 @@ satisfy ::
   -- | Predicate to apply
   (Token s -> Bool) ->
   m (Token s)
-satisfy f = token testChar E.empty
+satisfy f = token testChar E.empty <?> "satisfy"
   where
     testChar x = if f x then Just x else Nothing
 {-# INLINE satisfy #-}
@@ -488,7 +490,7 @@ satisfy f = token testChar E.empty
 --
 -- @since 7.0.0
 anySingle :: MonadParsec e s m => m (Token s)
-anySingle = satisfy (const True)
+anySingle = satisfy (const True) <?> "anySingle"
 {-# INLINE anySingle #-}
 
 -- | Match any token but the given one. It's a good idea to attach a 'label'
@@ -504,7 +506,7 @@ anySingleBut ::
   -- | Token we should not match
   Token s ->
   m (Token s)
-anySingleBut t = satisfy (/= t)
+anySingleBut t = satisfy (/= t) <?> "anySingleBut [" ++ show t ++ "]"
 {-# INLINE anySingleBut #-}
 
 -- | @'oneOf' ts@ succeeds if the current token is in the supplied
@@ -530,7 +532,8 @@ oneOf ::
   -- | Collection of matching tokens
   f (Token s) ->
   m (Token s)
-oneOf cs = satisfy (`elem` cs)
+oneOf cs = satisfy (`elem` cs) <?>
+  ("oneOf [" ++ foldl' (\b i -> (if null b then "" else b ++ ", ") ++ show i) "" cs ++ "]")
 {-# INLINE oneOf #-}
 
 -- | As the dual of 'oneOf', @'noneOf' ts@ succeeds if the current token
@@ -552,7 +555,8 @@ noneOf ::
   -- | Collection of taken we should not match
   f (Token s) ->
   m (Token s)
-noneOf cs = satisfy (`notElem` cs)
+noneOf cs = satisfy (`notElem` cs) <?>
+  ("oneOf [" ++ foldl' (\b i -> (if null b then "" else b ++ ", ") ++ show i) "" cs ++ "]")
 {-# INLINE noneOf #-}
 
 -- | @'chunk' chk@ only matches the chunk @chk@.
@@ -605,7 +609,7 @@ match p = do
 --
 -- @since 6.0.0
 takeRest :: MonadParsec e s m => m (Tokens s)
-takeRest = takeWhileP Nothing (const True)
+takeRest = takeWhileP Nothing (const True) <?> "takeRest"
 {-# INLINE takeRest #-}
 
 -- | Return 'True' when end of input has been reached.
@@ -627,7 +631,8 @@ getInput = stateInput <$> getParserState
 
 -- | @'setInput' input@ continues parsing with @input@.
 setInput :: MonadParsec e s m => s -> m ()
-setInput s = updateParserState (\(State _ o pst de) -> State s o pst de)
+setInput s =
+  updateParserState (\(State _ o pst de tr) -> State s o pst de $ appendTrace o "setInput" tr)
 {-# INLINE setInput #-}
 
 -- | Return the current source position. This function /is not cheap/, do
@@ -662,13 +667,13 @@ getOffset = stateOffset <$> getParserState
 --
 -- @since 7.0.0
 setOffset :: MonadParsec e s m => Int -> m ()
-setOffset o = updateParserState $ \(State s _ pst de) ->
-  State s o pst de
+setOffset o = updateParserState $ \(State s _ pst de tr) ->
+  State s o pst de $ appendTrace o "setOffset" tr
 {-# INLINE setOffset #-}
 
 -- | @'setParserState' st@ sets the parser state to @st@.
 --
 -- See also: 'getParserState', 'updateParserState'.
 setParserState :: MonadParsec e s m => State s e -> m ()
-setParserState st = updateParserState (const st)
+setParserState st = updateParserState (\curSt -> st { stateTracing = stateTracing curSt })
 {-# INLINE setParserState #-}

@@ -1,5 +1,5 @@
 cabal-version:   2.4
-name:            megaparsec-tests
+name:            slow-megaparsec-tests
 version:         9.3.0
 license:         BSD-2-Clause
 license-file:    LICENSE.md
@@ -30,8 +30,8 @@ library
         containers >=0.5 && <0.7,
         hspec >=2.0 && <3.0,
         hspec-expectations >=0.8 && <0.9,
-        hspec-megaparsec >=2.0 && <3.0,
-        megaparsec ==9.3.0,
+        -- hspec-megaparsec >=2.0 && <3.0,
+        slow-megaparsec ==9.3.0,
         mtl >=2.2.2 && <3.0,
         text >=0.2 && <2.1,
         transformers >=0.4 && <0.7
@@ -71,8 +71,8 @@ test-suite tests
         hspec >=2.0 && <3.0,
         hspec-expectations >=0.8 && <0.9,
         hspec-megaparsec >=2.0 && <3.0,
-        megaparsec ==9.3.0,
-        megaparsec-tests,
+        slow-megaparsec ==9.3.0,
+        slow-megaparsec-tests,
         mtl >=2.2.2 && <3.0,
         parser-combinators >=1.0 && <2.0,
         scientific >=0.3.1 && <0.4,

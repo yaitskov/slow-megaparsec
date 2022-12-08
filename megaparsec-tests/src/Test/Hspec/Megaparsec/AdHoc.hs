@@ -68,7 +68,7 @@ import qualified Data.Text.Lazy as TL
 import Data.Void
 import Data.Word (Word8)
 import Test.Hspec
-import Test.Hspec.Megaparsec
+-- import Test.Hspec.Megaparsec
 import Test.QuickCheck
 import Text.Megaparsec
 import Text.Megaparsec.Debug (MonadParsecDbg)

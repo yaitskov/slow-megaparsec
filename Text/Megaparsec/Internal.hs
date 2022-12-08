@@ -39,6 +39,9 @@ module Text.Megaparsec.Internal
     refreshHints,
     runParsecT,
     withParsecT,
+    -- * Trace functions
+    appendTrace,
+
   )
 where
 
@@ -237,10 +240,60 @@ pBind m k = ParsecT $ \s cok cerr eok eerr ->
 instance Stream s => Fail.MonadFail (ParsecT e s m) where
   fail = pFail
 
+type InputOffset = Int
+type MegaParsecTraceMessage = String
+
+appendTrace ::  InputOffset -> MegaParsecTraceMessage -> MegaParsecTracing s -> MegaParsecTracing s
+appendTrace ofs msg t@(MegaParsecTracing _ steps numOfSteps) =
+  t { megaParsecTracingSteps = MegaParsecTrace ofs msg : steps,
+      megaParsecTracingNumOfSteps = numOfSteps + 1
+    }
+{-# INLINE appendTrace #-}
+
+appendTraceBegin ::  InputOffset -> MegaParsecTraceMessage -> MegaParsecTracing s -> MegaParsecTracing s
+appendTraceBegin ofs msg t@(MegaParsecTracing _ steps numOfSteps) =
+  t { megaParsecTracingSteps = MegaParsecTraceBegin ofs msg : steps,
+      megaParsecTracingNumOfSteps = numOfSteps + 1
+    }
+{-# INLINE appendTraceBegin #-}
+
+appendTraceEnd
+  :: InputOffset
+  -> MegaParsecTraceMessage
+  -> InputOffset
+  -> MegaParsecTracing s
+  -> MegaParsecTracing s
+appendTraceEnd ofs msg ofsBegin t@(MegaParsecTracing _ steps numOfSteps) =
+  t { megaParsecTracingSteps = MegaParsecTraceEnd ofs msg ofsBegin : steps,
+      megaParsecTracingNumOfSteps = numOfSteps + 1
+    }
+{-# INLINE appendTraceEnd #-}
+
+addTraceToState :: MegaParsecTraceMessage -> State e s -> State e s
+addTraceToState msg st@(State _ o _ _ t) =
+  st {
+    stateTracing = appendTrace o msg t
+  }
+{-# INLINE addTraceToState #-}
+
+startTraceSection :: MegaParsecTraceMessage -> State e s -> State e s
+startTraceSection msg st@(State _ o _ _ t) =
+  st {
+    stateTracing = appendTraceBegin o msg t
+  }
+{-# INLINE startTraceSection #-}
+
+endTraceSection :: InputOffset -> MegaParsecTraceMessage -> State e s -> State e s
+endTraceSection ofsBegin msg st@(State _ o _ _ t) =
+  st {
+    stateTracing = appendTraceEnd o msg ofsBegin t
+  }
+{-# INLINE endTraceSection #-}
+
 pFail :: String -> ParsecT e s m a
-pFail msg = ParsecT $ \s@(State _ o _ _) _ _ _ eerr ->
+pFail msg = ParsecT $ \s@(State _ o _ _ _) _ _ _ eerr ->
   let d = E.singleton (ErrorFail msg)
-   in eerr (FancyError o d) s
+   in eerr (FancyError o d) $ addTraceToState ("fail [" ++ msg ++ "]") s
 {-# INLINE pFail #-}
 
 instance (Stream s, MonadIO m) => MonadIO (ParsecT e s m) where
@@ -295,8 +348,8 @@ instance (Ord e, Stream s) => MonadPlus (ParsecT e s m) where
   mplus = pPlus
 
 pZero :: ParsecT e s m a
-pZero = ParsecT $ \s@(State _ o _ _) _ _ _ eerr ->
-  eerr (TrivialError o Nothing E.empty) s
+pZero = ParsecT $ \s@(State _ o _ _ _) _ _ _ eerr ->
+  eerr (TrivialError o Nothing E.empty) $ addTraceToState "mzero" s
 {-# INLINE pZero #-}
 
 pPlus ::
@@ -306,22 +359,35 @@ pPlus ::
   ParsecT e s m a
 pPlus m n = ParsecT $ \s cok cerr eok eerr ->
   let meerr err ms =
-        let ncerr err' s' = cerr (err' <> err) (longestMatch ms s')
+        let ncerr err' s' = cerr (err' <> err) $ longestMatch' s'
             neok x s' hs = eok x s' (toHints (stateOffset s') err <> hs)
-            neerr err' s' = eerr (err' <> err) (longestMatch ms s')
-         in unParser n s cok ncerr neok neerr
-   in unParser m s cok cerr eok meerr
+            neerr err' s' = eerr (err' <> err) $ longestMatch' s'
+            sectionStart = stateOffset s
+            longestMatch' s' =
+              longestMatch
+                (stateTracing s)
+                (endTraceSection sectionStart "_ <|>" ms)
+                (endTraceSection sectionStart "<|> _" s')
+         in unParser n (startTraceSection "_ <|>" s) cok ncerr neok neerr
+   in unParser m (startTraceSection "<|> _" s) cok cerr eok meerr
 {-# INLINE pPlus #-}
 
 -- | From two states, return the one with the greater number of processed
 -- tokens. If the numbers of processed tokens are equal, prefer the second
 -- state.
-longestMatch :: State s e -> State s e -> State s e
-longestMatch s1@(State _ o1 _ _) s2@(State _ o2 _ _) =
+longestMatch :: MegaParsecTracing s -> State s e -> State s e -> State s e
+longestMatch (MegaParsecTracing oi steps numSteps)
+  s1@(State _ o1 _ _ (MegaParsecTracing _ _tps1 numSteps1))
+  s2@(State _ o2 _ _ (MegaParsecTracing _ stps2 numSteps2)) =
   case o1 `compare` o2 of
-    LT -> s2
-    EQ -> s2
-    GT -> s1
+    LT -> s2 { stateTracing = t' }
+    EQ -> s2 { stateTracing = t' }
+    GT -> s1 { stateTracing = t' }
+  where
+    t' = MegaParsecTracing oi steps' numSteps'
+    rightSteps = numSteps2 - numSteps
+    steps' = take rightSteps stps2 ++ steps
+    numSteps' = rightSteps + numSteps1
 {-# INLINE longestMatch #-}
 
 -- | @since 6.0.0
@@ -372,30 +438,32 @@ pLabel l p = ParsecT $ \s cok cerr eok eerr ->
           (TrivialError pos us _) ->
             TrivialError pos us (maybe E.empty E.singleton el)
           _ -> err
-   in unParser p s cok' cerr eok' eerr'
+   in unParser p (addTraceToState ("label: " ++ l) s) cok' cerr eok' eerr'
 {-# INLINE pLabel #-}
 
 pTry :: ParsecT e s m a -> ParsecT e s m a
 pTry p = ParsecT $ \s cok _ eok eerr ->
-  let eerr' err _ = eerr err s
-   in unParser p s cok eerr' eok eerr'
+  let eerr' err _ = eerr err s'
+      s' = addTraceToState "try" s
+   in unParser p s' cok eerr' eok eerr'
 {-# INLINE pTry #-}
 
 pLookAhead :: Stream s => ParsecT e s m a -> ParsecT e s m a
 pLookAhead p = ParsecT $ \s _ cerr eok eerr ->
-  let eok' a _ _ = eok a s mempty
-   in unParser p s eok' cerr eok' eerr
+  let eok' a _ _ = eok a s' mempty
+      s' = addTraceToState "lookAhead" s
+   in unParser p s' eok' cerr eok' eerr
 {-# INLINE pLookAhead #-}
 
 pNotFollowedBy :: Stream s => ParsecT e s m a -> ParsecT e s m ()
-pNotFollowedBy p = ParsecT $ \s@(State input o _ _) _ _ eok eerr ->
+pNotFollowedBy p = ParsecT $ \s@(State input o _ _ _) _ _ eok eerr ->
   let what = maybe EndOfInput (Tokens . nes . fst) (take1_ input)
       unexpect u = TrivialError o (pure u) E.empty
       cok' _ _ _ = eerr (unexpect what) s
       cerr' _ _ = eok () s mempty
       eok' _ _ _ = eerr (unexpect what) s
       eerr' _ _ = eok () s mempty
-   in unParser p s cok' cerr' eok' eerr'
+   in unParser p (addTraceToState "notFollowedBy" s) cok' cerr' eok' eerr'
 {-# INLINE pNotFollowedBy #-}
 
 pWithRecovery ::
@@ -430,15 +498,15 @@ pObserving p = ParsecT $ \s cok _ eok _ ->
 {-# INLINE pObserving #-}
 
 pEof :: forall e s m. Stream s => ParsecT e s m ()
-pEof = ParsecT $ \s@(State input o pst de) _ _ eok eerr ->
+pEof = ParsecT $ \s@(State input o pst de tr) _ _ eok eerr ->
   case take1_ input of
-    Nothing -> eok () s mempty
+    Nothing -> eok () (addTraceToState "eof" s) mempty
     Just (x, _) ->
       let us = (pure . Tokens . nes) x
           ps = E.singleton EndOfInput
        in eerr
             (TrivialError o us ps)
-            (State input o pst de)
+            (addTraceToState "eof" (State input o pst de $ appendTrace o "eof" tr))
 {-# INLINE pEof #-}
 
 pToken ::
@@ -447,7 +515,8 @@ pToken ::
   (Token s -> Maybe a) ->
   Set (ErrorItem (Token s)) ->
   ParsecT e s m a
-pToken test ps = ParsecT $ \s@(State input o pst de) cok _ _ eerr ->
+pToken test ps = ParsecT $ \s@(State input o pst de tr) cok _ _ eerr ->
+  let tr' = appendTrace o "token" tr in
   case take1_ input of
     Nothing ->
       let us = pure EndOfInput
@@ -456,11 +525,12 @@ pToken test ps = ParsecT $ \s@(State input o pst de) cok _ _ eerr ->
       case test c of
         Nothing ->
           let us = (Just . Tokens . nes) c
+
            in eerr
                 (TrivialError o us ps)
-                (State input o pst de)
+                (State input o pst de tr')
         Just x ->
-          cok x (State cs (o + 1) pst de) mempty
+          cok x (State cs (o + 1) pst de tr') mempty
 {-# INLINE pToken #-}
 
 pTokens ::
@@ -469,8 +539,11 @@ pTokens ::
   (Tokens s -> Tokens s -> Bool) ->
   Tokens s ->
   ParsecT e s m (Tokens s)
-pTokens f tts = ParsecT $ \s@(State input o pst de) cok _ eok eerr ->
+pTokens f tts = ParsecT $ \s@(State input o pst de tr) cok _ eok eerr ->
   let pxy = Proxy :: Proxy s
+      traceMsg = "tokens [" ++ show tts ++ "]"
+      addTraceToState' = addTraceToState traceMsg
+      tr' = appendTrace o traceMsg tr
       unexpect pos' u =
         let us = pure u
             ps = (E.singleton . Tokens . NE.fromList . chunkToTokens pxy) tts
@@ -478,17 +551,17 @@ pTokens f tts = ParsecT $ \s@(State input o pst de) cok _ eok eerr ->
       len = chunkLength pxy tts
    in case takeN_ len input of
         Nothing ->
-          eerr (unexpect o EndOfInput) s
+          eerr (unexpect o EndOfInput) $ addTraceToState' s
         Just (tts', input') ->
           if f tts tts'
             then
-              let st = State input' (o + len) pst de
+              let st = State input' (o + len) pst de tr'
                in if chunkEmpty pxy tts
                     then eok tts' st mempty
                     else cok tts' st mempty
             else
               let ps = (Tokens . NE.fromList . chunkToTokens pxy) tts'
-               in eerr (unexpect o ps) (State input o pst de)
+               in eerr (unexpect o ps) (State input o pst de tr')
 {-# INLINE pTokens #-}
 
 pTakeWhileP ::
@@ -497,17 +570,18 @@ pTakeWhileP ::
   Maybe String ->
   (Token s -> Bool) ->
   ParsecT e s m (Tokens s)
-pTakeWhileP ml f = ParsecT $ \(State input o pst de) cok _ eok _ ->
+pTakeWhileP ml f = ParsecT $ \(State input o pst de tr) cok _ eok _ ->
   let pxy = Proxy :: Proxy s
       (ts, input') = takeWhile_ f input
+      tr' = appendTrace o ("takeWhileP " ++ maybe "" show ml) tr
       len = chunkLength pxy ts
       hs =
         case ml >>= NE.nonEmpty of
           Nothing -> mempty
           Just l -> (Hints . E.singleton . Label) l
    in if chunkEmpty pxy ts
-        then eok ts (State input' (o + len) pst de) hs
-        else cok ts (State input' (o + len) pst de) hs
+        then eok ts (State input' (o + len) pst de tr') hs
+        else cok ts (State input' (o + len) pst de tr') hs
 {-# INLINE pTakeWhileP #-}
 
 pTakeWhile1P ::
@@ -516,9 +590,10 @@ pTakeWhile1P ::
   Maybe String ->
   (Token s -> Bool) ->
   ParsecT e s m (Tokens s)
-pTakeWhile1P ml f = ParsecT $ \(State input o pst de) cok _ _ eerr ->
+pTakeWhile1P ml f = ParsecT $ \(State input o pst de tr) cok _ _ eerr ->
   let pxy = Proxy :: Proxy s
       (ts, input') = takeWhile_ f input
+      tr' = appendTrace o ("takeWhileP " ++ maybe "" show ml) tr
       len = chunkLength pxy ts
       el = Label <$> (ml >>= NE.nonEmpty)
       hs =
@@ -534,8 +609,8 @@ pTakeWhile1P ml f = ParsecT $ \(State input o pst de) cok _ _ eerr ->
               ps = maybe E.empty E.singleton el
            in eerr
                 (TrivialError o us ps)
-                (State input o pst de)
-        else cok ts (State input' (o + len) pst de) hs
+                (State input o pst de tr')
+        else cok ts (State input' (o + len) pst de tr') hs
 {-# INLINE pTakeWhile1P #-}
 
 pTakeP ::
@@ -544,8 +619,9 @@ pTakeP ::
   Maybe String ->
   Int ->
   ParsecT e s m (Tokens s)
-pTakeP ml n' = ParsecT $ \s@(State input o pst de) cok _ _ eerr ->
+pTakeP ml n' = ParsecT $ \s@(State input o pst de tr) cok _ _ eerr ->
   let n = max 0 n'
+      tr' = appendTrace o ("takeP " ++ maybe "" show ml) tr
       pxy = Proxy :: Proxy s
       el = Label <$> (ml >>= NE.nonEmpty)
       ps = maybe E.empty E.singleton el
@@ -558,16 +634,17 @@ pTakeP ml n' = ParsecT $ \s@(State input o pst de) cok _ _ eerr ->
                 then
                   eerr
                     (TrivialError (o + len) (pure EndOfInput) ps)
-                    (State input o pst de)
-                else cok ts (State input' (o + len) pst de) mempty
+                    (State input o pst de tr')
+                else cok ts (State input' (o + len) pst de tr') mempty
 {-# INLINE pTakeP #-}
 
 pGetParserState :: Stream s => ParsecT e s m (State s e)
-pGetParserState = ParsecT $ \s _ _ eok _ -> eok s s mempty
+pGetParserState = ParsecT $ \s _ _ eok _ -> eok s (addTraceToState "getParserState" s) mempty
 {-# INLINE pGetParserState #-}
 
 pUpdateParserState :: Stream s => (State s e -> State s e) -> ParsecT e s m ()
-pUpdateParserState f = ParsecT $ \s _ _ eok _ -> eok () (f s) mempty
+pUpdateParserState f =
+  ParsecT $ \s _ _ eok _ -> eok () (addTraceToState "updateParserState" $ f s) mempty
 {-# INLINE pUpdateParserState #-}
 
 nes :: a -> NonEmpty a
