@@ -1,5 +1,5 @@
 cabal-version:   2.4
-name:            megaparsec
+name:            slow-megaparsec
 version:         9.3.0
 license:         BSD-2-Clause
 license-file:    LICENSE.md
@@ -12,11 +12,31 @@ author:
 tested-with:     ghc ==9.0.2 ghc ==9.2.4 ghc ==9.4.1
 homepage:        https://github.com/mrkkrp/megaparsec
 bug-reports:     https://github.com/mrkkrp/megaparsec/issues
-synopsis:        Monadic parser combinators
+synopsis:        megaparsec compatible fork of tracing Monadic parser combinators
 description:
-    This is an industrial-strength monadic parser combinator library.
-    Megaparsec is a feature-rich package that tries to find a nice balance
-    between speed, flexibility, and quality of parse errors.
+    slow-megaparsec is a megaparsec fork with compatible API for extended
+    on observability and debugging. slow-megaparsec doesn't try to compete with
+    megaparsec, but rather complements it, because megaparsec does good job,
+    but it might be hard to debug a complex parser built on top of megaparsec,
+    especially when there is no formal gramma for a language exists
+    (e.g. SQL Server API from MSDN).
+
+    Conventional debugging experience is limited in mepagarsec due extra runtime costs.
+    Main goal of the package is to provide "step-by-step" tracing debugger for any parser
+    built with megaparsec API without extra development.
+    In other words provide all features developers
+    were lacking of because of perfomance overhead in production.
+
+    Just replace megaparsec dependency with slow-megaparsec in your project cabal file
+    and rerun broken tests. The library API is compatible with megaparsec, but
+    have more introspection features at runtime expense.
+
+    Parser is a state machine and traditional debugger experience is a must.
+
+    Besides out-of-the-box debugger slow-megaparsec helps to estimate parsec efficiency i.e.
+    how many times backtracking is used, an average number of character reread per backracking etc.
+
+    Also the package helps newbies to understand better how parser works.
 
 category:        Parsing
 build-type:      Simple
